@@ -1,0 +1,33 @@
+= `cross-platform-copy-paste`
+Lasse Schlör
+
+== About
+
+A script to handle copying and pasting to local and remote clipboards without
+the caller needing to worry about the platform. The only strict dependency is
+`/bin/sh` (at least I hope so).
+
+Inspiration taken from
+* https://github.com/samoshkin/tmux-config.git
+* https://unix.stackexchange.com/questions/9605/how-can-i-detect-if-the-shell-is-controlled-from-ssh
+* https://sunaku.github.io/tmux-yank-osc52.html
+* https://github.com/neovim/neovim/blob/master/runtime/doc/provider.txt
+
+== TODO list
+
+* Add other backends, e.g.:
+** `wl-copy` and `wl-paste`
+** `lemonade`
+** `doitclient`
+** `win32yank`
+* Testing
+* Think about what else could be on this list
+
+== Source code
+
+For convenience, here are the contents from the script, link:cpcp.sh[`cpcp.sh`]:
+
+[,sh]
+----
+include::cpcp.sh
+----
