@@ -5,7 +5,7 @@ Lasse Schlör
 
 A script to handle copying and pasting to local and remote clipboards without
 the caller needing to worry about the platform. The only strict dependency is
-`/bin/sh` (at least I hope so).
+`/bin/sh` (at least I hope so, for now).
 
 Inspiration taken from
 
@@ -16,7 +16,7 @@ Inspiration taken from
 
 == TODO list
 
-* Cleanup subcommand
+* A `cleanup` subcommand
 * Go over function scoping
 * Add other backends, e.g.:
 ** `wl-copy` and `wl-paste`
@@ -29,15 +29,10 @@ Inspiration taken from
 == Source code
 
 For convenience, here are the contents from the script, link:cpcp.sh[`cpcp.sh`]
-(may not show on github):
+(may not be displayed properly on github):
 
 [,sh]
 ----
 include::cpcp.sh[]
-----
-
-[,sh]
-----
-include::https://raw.githubusercontent.com/publik-void/cross-platform-copy-paste/master/cpcp.sh[]
 ----
 
