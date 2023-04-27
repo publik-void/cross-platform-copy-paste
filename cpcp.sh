@@ -5,23 +5,34 @@
 set -e
 #set -eu
 
-subcommands="copy paste dry"
-locations="auto local remote both dry"
+subcommands="copy paste"
+locations="auto local remote both"
 backends="auto pbcopy pbpaste reattach-to-user-namespace xsel xclip nc osc52 \
-  tmux tmp dry"
+tmux fifo shm tmp"
 
-tmp_file_path="/tmp/cpcp-tmp-clipboard-u$(id -u)-g$(id -g)"
+default_subcommand="copy"
+default_location="auto"
+default_backend="auto"
 
 print_usage() {
   msg="Usage:
-  $0 \\
+  $0 [--dry] [--verbose] \\
     [$(printf %s "$subcommands" | tr " " "|")] \\
     [$(printf %s "$locations" | tr " " "|")] \\
     [$(printf %s "$backends" | tr " " "|")] \\
     [files...]
 
-  For the copy commands, stdin and any input files will be concatenated together
-  to form the input."
+Notes:
+  The default subcommand, location, and backend are $default_subcommand, \
+$default_location, and $default_backend, respectively.
+
+  The default for files is -, i.e. stdin/stdout.
+
+  The environment variable CPCP_REMOTE_TUNNEL_PORT has to be set for the nc \
+backend to be available.
+
+  The environment variable CPCP_BUFFER_FILE_DIRNAME can be set to use a custom \
+directory for the fifo, shm (if filesystem is in-memory), and tmp backends."
 
   printf "%s\n" "$msg"
 }
@@ -32,55 +43,101 @@ print_nonexistent_combination() {
   printf "%s\n" "$msg" >&2
 }
 
-one_of() {
+is() { [ "$1" = "true" ]; }
+
+has() { type "$1" 1> /dev/null; }
+
+one_of() (
   word="$1"
   shift 1
   [ $# -le 0 ] && return 1
   [ "$word" = "$1" ] && return 0
   shift 1
   one_of $word $@
+)
+
+# This only works if stdin doesn't come from a redirection, so of limited value
+is_tty() { tty 2> /dev/null; }
+
+is_ssh_session() { [ "$SSH_CLIENT" ] && [ "$SSH_TTY" ]; }
+
+is_tmux_session() { [ "$TMUX" ]; }
+
+is_fs() {
+  fs="$1"; file="$2"
+  df_output=$(df -P -t "$fs" "$file" 2> /dev/null) || return 1
+  df_output=$(printf "%s" "$df_output" | sed -e '/^Filesystem/d')
+  [ "$df_output" ]
 }
 
-has() {
-  type "$1" &>/dev/null
+is_ram() {
+  file="$1"; backend="shm"; [ $# -le 1 ] || backend="$2"
+  if [ "$backend" = "shm" ]; then
+    is_fs "tmpfs" "$file" && return 0
+    is_fs "ramfs" "$file" && return 0
+    is_fs "shm" "$file" && return 0
+    return 1
+  fi
 }
 
-is_tty() {
-  tty &>/dev/null
+is_suited_buffer_file_dir() {
+  file="$1"; backend="$2"
+  [ -d "$file" ] && is_ram "$file" "$backend" && printf "%s" "$file"
 }
 
-is_ssh_session() {
-  [ "$SSH_CLIENT" ] && [ "$SSH_TTY" ]
+get_buffer_file_dirname() {
+  backend="$1"
+  is_suited_buffer_file_dir "$CPCP_BUFFER_FILE_DIRNAME" "$backend" || \
+  is_suited_buffer_file_dir "/run/shm" "$backend" || \
+  is_suited_buffer_file_dir "/dev/shm" "$backend" || \
+  is_suited_buffer_file_dir "/tmp" "$backend"
 }
 
-is_tmux_session() {
-  [ "$TMUX" ]
+set_buffer_file() {
+  backend="$1"
+  buffer_file_basename_stem="cpcp-clipboard-u$(id -u)-g$(id -g)"
+  dirname=$(get_buffer_file_dirname "$backend") || return 1
+  basename="$buffer_file_basename_stem-$backend"
+  file="$dirname/$basename"
+  if [ "$backend" = "fifo" ] && [ ! -p "$file" ]; then
+    mkfifo -m 600 "$file" 2> /dev/null || return 1
+  else
+    touch "$file" 2> /dev/null && chmod 600 "$file" 2> /dev/null || return 1
+  fi
+  buffer_file="$file"
 }
 
-get_backend() {
-  if [ $# -le 0 ]; then
-    printf "%s\n" "$0: no suitable backend could be found" >&2
+set_backend() {
+  mode="$1"
+  if [ $# -le 1 ]; then
+    backend=""
+    if [ "$mode" = "auto" ]; then
+      printf "%s\n" "$0: no suitable backend could be found" >&2
+    else
+      printf "%s\n" "$0: backend "$mode" not available" >&2
+    fi
     return 2
   fi
-  backend="$1"
-  if ([ "$backend" = "bpcopy" ] && has pbcopy && has pbpaste) || \
-     ([ "$backend" = "reattach-to-user-namespace" ] && has \
-       reattach-to-user-namespace) || \
-     ([ "$backend" = "xsel" ] && has xsel && [ -n "${DISPLAY-}" ]) || \
-     ([ "$backend" = "xclip" ] && has xclip && [ -n "${DISPLAY-}" ]) || \
-     ([ "$backend" = "nc" ] && has nc && [ "$cpcp_remote_tunnel_port" ]) || \
-     ([ "$backend" = "osc52" ]) || \
-     ([ "$backend" = "tmux" ] && has tmux && is_tmux_session) || \
-     ([ "$backend" = "tmp" ]); then
-    printf %s "$backend"
-  else
-    shift 1
-    get_backend $@
+  backend="$2"
+  if ! {
+    ([ "$backend" = "bpcopy" ] && has pbcopy && has pbpaste) || \
+    ([ "$backend" = "reattach-to-user-namespace" ] && \
+      has reattach-to-user-namespace) || \
+    ([ "$backend" = "xsel" ] && has xsel && [ -n "${DISPLAY-}" ]) || \
+    ([ "$backend" = "xclip" ] && has xclip && [ -n "${DISPLAY-}" ]) || \
+    ([ "$backend" = "nc" ] && has nc && [ "$CPCP_REMOTE_TUNNEL_PORT" ]) || \
+    ([ "$backend" = "osc52" ]) || \
+    ([ "$backend" = "tmux" ] && has tmux && is_tmux_session) || \
+    {([ "$backend" = "fifo" ] || \
+      [ "$backend" = "shm" ] || \
+      [ "$backend" = "tmp" ]) && set_buffer_file "$backend"; }; } then
+    shift 2
+    set_backend $mode $@
   fi
 }
 
 osc52_encode() {
-  data=$(cat $@)
+  data=$(cat "$@")
 
   # The maximum length of an OSC 52 escape sequence is 100_000 bytes, of which
   # 7 bytes are occupied by a "\033]52;c;" header, 1 byte by a "\a" footer, and
@@ -98,43 +155,69 @@ osc52_encode() {
   esc="$(printf %s "$data" | head -c $max_length | base64 | tr -d '\r\n')"
   esc="\033]52;c;$esc\a"
 
-  #if is_tmux_session; then
-  #  esc="\033Ptmux;\033$esc\033\\"
-  #fi
+  if is_tmux_session; then
+    esc="\033Ptmux;\033$esc\033\\" # " (comment fixes broken syntax highlight)
+  fi
 
   printf "%s" "$esc"
 }
 
 local_tty() {
-  target_tty=""
   if is_tmux_session; then
     target_tty=$(tmux list-panes -F "#{pane_active} #{pane_tty}" | \
       sed -n -e 's/^1 /\1/p')
-  elif is_tty; then
-    target_tty=$(tty)
+  else
+    target_tty=$(is_tty) || target_tty="/dev/tty"
   fi
-  [ -c "$target_tty" ] || target_tty="/dev/null"
   printf "%s" "$target_tty"
 }
 
-remote_tty() {
-  if is_ssh_session; then
-    target_tty="$SSH_TTY"
+remote_tty() { printf "%s" "$SSH_TTY"; }
+
+tty_guard() {
+  target_tty="$1"
+  if [ -c "$target_tty" ]; then
+    printf "%s" "$target_tty"
+  else
+    printf "%s\n" "$0: selected non-existent tty \"$target_tty\"" >&2
+    printf "%s" "/dev/null"
   fi
-  [ -c "$target_tty" ] || target_tty="/dev/null"
-  printf "%s" "$target_tty"
 }
 
-default_subcommand="copy"
-default_location="auto"
-default_backend="auto"
+oneline_args() {
+  if [ $# -le 0 ]; then
+    oneline=""
+  else
+    oneline="$1"
+    shift 1
+    until [ $# -le 0 ]; do
+      oneline="$oneline $1"
+      shift 1
+    done
+  fi
+  printf "%s" "$oneline"
+}
+
+buffer_file=""
+
+dry="false"; verbose="false"
+
+until [ "$#" -le 0 ]; do
+  if [ "$1" == "--dry" ]; then
+    dry="true"
+  elif [ "$1" == "--verbose" ]; then
+    verbose="true"
+  else
+    break
+  fi
+  shift 1
+done
 
 if [ "$#" -le 0 ]; then
   subcommand="$default_subcommand"
 else
   subcommand="$1"
-  one_of "$subcommand" $subcommands "drycopy" "drypaste" || \
-    (print_usage; return 1)
+  one_of "$subcommand" $subcommands || (print_usage; return 1)
   shift 1
 fi
 
@@ -154,19 +237,6 @@ else
   shift 1
 fi
 
-dry="false"; verbose="false"
-
-if [ "$subcommand" = "dry" ] || [ "$subcommand" = "drycopy" ] || \
-   [ "$subcommand" = "drypaste" ] || [ "$location" = "dry" ] || \
-   [ "$backend" = "dry" ]; then
-  dry="true"; verbose="true"
-  [ "$subcommand" = "dry" ] && subcommand="auto"
-  [ "$subcommand" = "drycopy" ] && subcommand="copy"
-  [ "$subcommand" = "drypaste" ] && subcommand="paste"
-  [ "$location" = "dry" ] && location="auto"
-  [ "$backend" = "dry" ] && backend="auto"
-fi
-
 [ "$subcommand" = "auto" ] && subcommand="copy"
 
 if [ "$location" = "auto" ]; then
@@ -182,74 +252,87 @@ if [ "$location" = "auto" ]; then
 fi
 
 if [ "$location" = "both" ]; then
-  if [ "$dry" = "true" ]; then
-    [ "$subcommand" = "auto" ] && subcommand="dry"
-    [ "$subcommand" = "copy" ] && subcommand="drycopy"
-    [ "$subcommand" = "paste" ] && subcommand="drypaste"
-  fi
-  $0 "$subcommand" "local"  "$backend" $@ || return $?
-  $0 "$subcommand" "remote" "$backend" $@ || return $?
-  return 0
-fi
+  opts=""
+  is "$verbose" && opts="--verbose $opts"
+  is "$dry" && opts="--dry $opts"
 
-if [ "$backend" = "auto" ]; then
-  if [ "$subcommand" = "copy" ]; then
-    if [ "$location" = "local" ]; then
-      backend=$(get_backend pbcopy reattach-to-user-namespace xsel xclip tmux \
-        tmp osc52)
-    elif [ "$location" = "remote" ]; then
-      backend=$(get_backend nc osc52)
-    fi
-  elif [ "$subcommand" = "paste" ]; then
-    if [ "$location" = "local" ]; then
-      backend=$(get_backend pbcopy reattach-to-user-namespace xsel xclip tmux \
-        tmp)
-    elif [ "$location" = "remote" ]; then
-      backend=$(get_backend)
-    fi
-  fi
+  pipe=$(cat)
+
+  printf "%s" "$pipe" $0 $opts "$subcommand" "local"  "$backend" $@ || return $?
+  printf "%s" "$pipe" $0 $opts "$subcommand" "remote" "$backend" $@ || return $?
+  return 0
 fi
 
 [ "$backend" = "pbpaste" ] && backend="pbcopy"
 
+if [ "$backend" = "auto" ]; then
+  if [ "$subcommand" = "copy" ]; then
+    if [ "$location" = "local" ]; then
+      set_backend "auto" pbcopy reattach-to-user-namespace xsel xclip tmux \
+        fifo shm tmp osc52
+    elif [ "$location" = "remote" ]; then
+      set_backend "auto" nc osc52
+    fi
+  elif [ "$subcommand" = "paste" ]; then
+    if [ "$location" = "local" ]; then
+      set_backend "auto" pbcopy reattach-to-user-namespace xsel xclip tmux \
+        fifo shm tmp
+    elif [ "$location" = "remote" ]; then
+      set_backend "auto"
+    fi
+  fi
+else
+  set_backend "$backend" "$backend"
+fi
+
 [ "$backend" ] || return 2
 
-[ "$verbose" = "true" ] && \
-  printf "%s\n" "$0 $subcommand $location $backend $@"
+is "$verbose" && \
+  printf "%s\n" "$(oneline_args "$0" "$subcommand" "$location" "$backend" $@)"
 
 command=""
 
 if [ "$subcommand" = "copy" ]; then
-  data=$(cat "$@")
   if [ "$location" = "local" ]; then
     case "$backend" in
       "pbcopy") command="pbcopy" ;;
-      "reattach-to-user-namespace") command="reattach-to-user-namespace pbcopy"
-        ;;
+      "reattach-to-user-namespace")
+        command="reattach-to-user-namespace pbcopy" ;;
       "xsel") command="xsel -i --clipboard" ;;
-      "xclip")
-        command="xclip -i -f -selection primary | xclip -i -selection clipboard"
-        ;;
-      "nc") command="nc localhost $cpcp_remote_tunnel_port" ;;
-      "osc52") command="osc52_encode > $(local_tty)" ;;
+      "xclip") command="xclip -i -f -selection primary | \
+xclip -i -selection clipboard" ;;
+      "nc") command="nc localhost $CPCP_REMOTE_TUNNEL_PORT" ;;
+      "osc52")
+        command="printf \"\$(osc52_encode)\" > $(tty_guard $(local_tty))" ;;
       "tmux") command="tmux load-buffer -" ;;
-      "tmp") command="tee $tmp_file_path &>/dev/null" ;;
+      "fifo") command="(data=\$(cat) && \
+(printf \"\" > $buffer_file &) > /dev/null && \
+cat $buffer_file > /dev/null && \
+(printf \"%s\" \"\$data\" > $buffer_file &) > /dev/null)" ;;
+      "shm") command="tee > $buffer_file" ;;
+      "tmp") command="tee > $buffer_file" ;;
     esac
   elif [ "$location" = "remote" ]; then
     case "$backend" in
-      "osc52") command="osc52_encode > $(remote_tty)" ;;
+      "osc52")
+        command="printf \"\$(osc52_encode)\" > $(tty_guard $(remote_tty))" ;;
     esac
   fi
 elif [ "$subcommand" = "paste" ]; then
   if [ "$location" = "local" ]; then
     case "$backend" in
       "pbcopy") command="pbpaste" ;;
-      "reattach-to-user-namespace") command="reattach-to-user-namespace pbpaste"
-        ;;
+      "reattach-to-user-namespace")
+        command="reattach-to-user-namespace pbpaste" ;;
       "xsel") command="xsel -o --clipboard" ;;
       "xclip") command="xclip -o -selection clipboard" ;;
       "tmux") command="tmux save-buffer -" ;;
-      "tmp") command="[ -f $tmp_file_path ] && cat $tmp_file_path" ;;
+      "fifo") command="((printf \"\" > $buffer_file &) > /dev/null && \
+data=\$(cat $buffer_file) && \
+(printf \"\$data\" > $buffer_file &) > /dev/null && \
+printf \"%s\" \"\$data\")" ;;
+      "shm") command="cat $buffer_file" ;;
+      "tmp") command="cat $buffer_file" ;;
     esac
   elif [ "$location" = "remote" ]; then
     case "$backend" in
@@ -259,12 +342,28 @@ elif [ "$subcommand" = "paste" ]; then
 fi
 
 if [ "$command" ]; then
-  if [ "$verbose" = "true" ]; then
-    printf "backend command is: %s\n" "$command"
+  if is "$verbose"; then
+    printf "backend command: %s\n" "$command"
   fi
-  if [ "$dry" = "false" ]; then
-    [ "$subcommand" = "copy" ] && (printf "%s" "$data" | eval "$command")
-    [ "$subcommand" = "paste" ] && eval $command
+  if ! is "$dry"; then
+    if [ "$subcommand" = "copy" ]; then
+      data=$(cat "$@")
+      printf "%s" "$data" | eval "$command"
+    elif [ "$subcommand" = "paste" ]; then
+      data=$(eval $command)
+      print_data() { is "$verbose" && printf "%s\n" "stdout paste: $data" || \
+        printf "%s" "$data"; }
+      [ $# -le 0 ] && print_data
+      until [ $# -le 0 ]; do
+        file="$1"
+        if [ "$file" = "-" ]; then
+          print_data
+        else
+          printf "%s" "$data" > "$file"
+        fi
+        shift 1
+      done
+    fi
   fi
 else
   print_nonexistent_combination "$subcommand" "$location" "$backend"
