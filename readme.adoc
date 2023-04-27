@@ -1,4 +1,4 @@
-= `cross-platform-copy-paste`
+= `cross-platform-copy-paste` (CPCP)
 Lasse Schlör
 
 == About
