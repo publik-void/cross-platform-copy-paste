@@ -8,6 +8,7 @@ the caller needing to worry about the platform. The only strict dependency is
 `/bin/sh` (at least I hope so).
 
 Inspiration taken from
+
 * https://github.com/samoshkin/tmux-config.git
 * https://unix.stackexchange.com/questions/9605/how-can-i-detect-if-the-shell-is-controlled-from-ssh
 * https://sunaku.github.io/tmux-yank-osc52.html
@@ -31,5 +32,5 @@ For convenience, here are the contents from the script, link:cpcp.sh[`cpcp.sh`]:
 
 [,sh]
 ----
-include::cpcp.sh
+include::cpcp.sh[]
 ----
