@@ -28,9 +28,16 @@ Inspiration taken from
 
 == Source code
 
-For convenience, here are the contents from the script, link:cpcp.sh[`cpcp.sh`]:
+For convenience, here are the contents from the script, link:cpcp.sh[`cpcp.sh`]
+(may not show on github):
 
 [,sh]
 ----
 include::cpcp.sh[]
 ----
+
+[,sh]
+----
+include::https://raw.githubusercontent.com/publik-void/cross-platform-copy-paste/master/cpcp.sh[]
+----
+
