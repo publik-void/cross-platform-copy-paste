@@ -14,6 +14,8 @@ default_subcommand="copy"
 default_location="auto"
 default_backend="auto"
 
+indent="|"
+
 print_usage() {
   msg="Usage:
   $0 [--dry] [--verbose] \\
@@ -28,11 +30,15 @@ $default_location, and $default_backend, respectively.
 
   The default for files is -, i.e. stdin/stdout.
 
-  The environment variable CPCP_REMOTE_TUNNEL_PORT has to be set for the nc \
-backend to be available.
-
-  The environment variable CPCP_BUFFER_FILE_DIRNAME can be set to use a custom \
-directory for the fifo, shm (if filesystem is in-memory), and tmp backends."
+Environment variables:
+  * CPCP_REMOTE_TUNNEL_PORT has to be set for the nc backend to be available.
+  * CPCP_BUFFER_FILE_DIRNAME can be set to use a custom directory for the \
+fifo, shm (if filesystem is in-memory), and tmp backends.
+  * CPCP_COPY_LOCAL_PRIORITY_LIST can be set to override the default set and \
+order of backends to try for $0 copy local auto.
+  * CPCP_COPY_REMOTE_PRIORITY_LIST, CPCP_PASTE_LOCAL_PRIORITY_LIST, \
+CPCP_PASTE_REMOTE_RPIORITY_LIST: same as above for other subcommands and \
+locations."
 
   printf "%s\n" "$msg"
 }
@@ -256,39 +262,50 @@ if [ "$location" = "both" ]; then
   is "$verbose" && opts="--verbose $opts"
   is "$dry" && opts="--dry $opts"
 
-  pipe=$(cat)
+  in=$(cat)
 
-  printf "%s" "$pipe" $0 $opts "$subcommand" "local"  "$backend" $@ || return $?
-  printf "%s" "$pipe" $0 $opts "$subcommand" "remote" "$backend" $@ || return $?
+  printf "%s" "$in" | $0 $opts "$subcommand" "local"  "$backend" $@ || return $?
+  printf "%s" "$in" | $0 $opts "$subcommand" "remote" "$backend" $@ || return $?
   return 0
 fi
 
 [ "$backend" = "pbpaste" ] && backend="pbcopy"
 
+backend_priority_list=""
+backend_priority_list_printable="false"
 if [ "$backend" = "auto" ]; then
+  backend_priority_list_printable="true"
   if [ "$subcommand" = "copy" ]; then
     if [ "$location" = "local" ]; then
-      set_backend "auto" pbcopy reattach-to-user-namespace xsel xclip tmux \
-        fifo shm tmp osc52
+      backend_priority_list="$CPCP_COPY_LOCAL_PRIORITY_LIST"
+      [ "$backend_priority_list" ] || backend_priority_list="\
+        pbcopy reattach-to-user-namespace xsel xclip tmux fifo shm tmp osc52"
     elif [ "$location" = "remote" ]; then
-      set_backend "auto" nc osc52
+      backend_priority_list="$CPCP_COPY_REMOTE_PRIORITY_LIST"
+      [ "$backend_priority_list" ] || backend_priority_list="nc osc52"
     fi
   elif [ "$subcommand" = "paste" ]; then
     if [ "$location" = "local" ]; then
-      set_backend "auto" pbcopy reattach-to-user-namespace xsel xclip tmux \
-        fifo shm tmp
+      backend_priority_list="$CPCP_PASTE_LOCAL_PRIORITY_LIST"
+      [ "$backend_priority_list" ] || backend_priority_list="\
+        pbcopy reattach-to-user-namespace xsel xclip tmux fifo shm tmp"
     elif [ "$location" = "remote" ]; then
-      set_backend "auto"
+      backend_priority_list="$CPCP_PASTE_REMOTE_PRIORITY_LIST"
+      [ "$backend_priority_list" ] || backend_priority_list=""
     fi
   fi
+  backend_priority_list=$(oneline_args $backend_priority_list)
+  set_backend "auto" $backend_priority_list
 else
   set_backend "$backend" "$backend"
 fi
 
 [ "$backend" ] || return 2
 
-is "$verbose" && \
-  printf "%s\n" "$(oneline_args "$0" "$subcommand" "$location" "$backend" $@)"
+is "$verbose" && printf "resolved command: %s\n" \
+  "$(oneline_args "$0" "$subcommand" "$location" "$backend" $@)"
+is "$verbose" && is "$backend_priority_list_printable" && \
+  printf "%s\n" "$indent using backend priority list: $backend_priority_list"
 
 command=""
 
@@ -343,7 +360,7 @@ fi
 
 if [ "$command" ]; then
   if is "$verbose"; then
-    printf "backend command: %s\n" "$command"
+    printf "$indent to backend command: %s\n" "$command"
   fi
   if ! is "$dry"; then
     if [ "$subcommand" = "copy" ]; then
@@ -351,8 +368,8 @@ if [ "$command" ]; then
       printf "%s" "$data" | eval "$command"
     elif [ "$subcommand" = "paste" ]; then
       data=$(eval $command)
-      print_data() { is "$verbose" && printf "%s\n" "stdout paste: $data" || \
-        printf "%s" "$data"; }
+      print_data() { is "$verbose" && printf "%s\n" \
+        "$indent resulting in: $data" || printf "%s" "$data"; }
       [ $# -le 0 ] && print_data
       until [ $# -le 0 ]; do
         file="$1"
