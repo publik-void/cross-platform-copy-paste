@@ -16,6 +16,8 @@ Inspiration taken from
 
 == TODO list
 
+* Backend priority lists
+* Clipboard encryption
 * A `cleanup` subcommand
 * Go over function scoping
 * Add other backends, e.g.:
