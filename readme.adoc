@@ -16,10 +16,12 @@ Inspiration taken from
 
 == TODO list
 
-* Clipboard encryption
 * A `cleanup` subcommand
-* Go over function scoping
+* Programming style and correctness
+** Go over function scoping
+** Go over instances of command substitions re. quotes vs. no quotes
 * Add other backends, e.g.:
+** `fish` universal variable
 ** `wl-copy` and `wl-paste`
 ** `lemonade`
 ** `doitclient`
