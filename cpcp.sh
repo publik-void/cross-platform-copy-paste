@@ -257,17 +257,23 @@ get_encryption_command() (
     printf "$CPCP_ENCRYPTION_COMMAND") || \
   (has libressl && printf "libressl") || \
   (has openssl  && printf "openssl") || \
-  printf "%s\n" "$0: no valid encryption command cound be found" >&2
+  printf "%s\n" "$0: no valid encryption command could be found" >&2
+  # TODO: Add `botan` as an encryption command
 )
 
 get_base64_command() (
+  decode="false"
+  [ $# = 1 ] && one_of "$1" "paste" "decode" "-d" && decode="true"
+  is decode && d_flag=" -d" || d_flag=""
+  is decode && botan_cmd="base64_dec" || botan_cmd="base64_enc"
   (has "$CPCP_BASE64_COMMAND" && \
-    printf "$CPCP_BASE64_COMMAND") || \
-  (has base64   && printf "base64") || \
-  (has libressl && printf "libressl base64") || \
-  (has openssl  && printf "openssl base64") || \
+    printf "$CPCP_BASE64_COMMAND$d_flag") || \
+  (has base64   && printf "base64$d_flag") || \
+  (has libressl && printf "libressl base64$d_flag") || \
+  (has openssl  && printf "openssl base64$d_flag") || \
   (has "$CPCP_ENCRYPTION_COMMAND" && \
-    printf "$CPCP_ENCRYPTION_COMMAND base64") || \
+    printf "$CPCP_ENCRYPTION_COMMAND base64$d_flag") || \
+  (has botan && printf "botan $botan_cmd -") || \
   printf "%s\n" "$0: no valid base64 codec could be found" >&2
 )
 
@@ -587,11 +593,11 @@ env:CPCP_ENCRYPTION_KEY$base64_option | "
 env:CPCP_ENCRYPTION_KEY$base64_option$data_pipe"
   fi
 elif is "$base64"; then
-  base64_command=$(get_base64_command) || return 6
+  base64_command=$(get_base64_command "$subcommand") || return 6
   if [ "$subcommand" = "copy" ]; then
     data_pipe="$data_pipe$base64_command | "
   elif [ "$subcommand" = "paste" ]; then
-    data_pipe=" | $base64_command -d$data_pipe"
+    data_pipe=" | $base64_command$data_pipe"
   fi
 fi
 
