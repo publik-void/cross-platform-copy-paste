@@ -452,7 +452,8 @@ is "$verbose" && printf "resolved command: %s\n" "$(oneline_args "$0" \
   "$location" "$backend" $@)"
 is "$verbose" && is "$backend_priority_list_printable" && printf \
   "$indent %s\n" "using backend priority list: $backend_priority_list"
-is "$verbose" && is "$compressor_priority_list_printable" && printf \
+is "$verbose" && [ ! "$compress" = "false" ] && \
+  is "$compressor_priority_list_printable" && printf \
   "$indent %s\n" "using compressor priority list: $compressor_priority_list"
 
 command=""
