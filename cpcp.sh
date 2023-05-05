@@ -8,19 +8,23 @@ set -e
 subcommands="copy paste"
 locations="auto local remote both"
 backends="auto - pbcopy pbpaste reattach-to-user-namespace xsel xclip nc osc52 \
-tmux fifo shm tmp"
+tmux fifo shm fish tmp"
 
 default_subcommand="copy"
 default_location="auto"
 default_backend="auto"
 
-cpcp_paste_reliant_backends="tmux fifo shm tmp"
+cpcp_paste_reliant_backends="tmux fifo shm fish tmp"
 
 compressors="auto false true lz4 gzip xz bzip2"
 
 default_cipher="aes-128-ctr"
 
 indent="|"
+
+fish_universal_clipboard_name="CPCP_CLIPBOARD_FISH"
+fish_read_buffer_name="CPCP_CLIPBOARD_FISH_READ_BUFFER"
+fish_append_flag_name="CPCP_CLIPBOARD_FISH_APPEND_FLAG"
 
 print_usage() {
   msg="Usage:
@@ -151,7 +155,7 @@ set_backend() {
   fi
   backend="$2"
   if ! {
-    ([ "$backend" = "bpcopy" ] && has pbcopy && has pbpaste) || \
+    ([ "$backend" = "pbcopy" ] && has pbcopy && has pbpaste) || \
     ([ "$backend" = "reattach-to-user-namespace" ] && \
       has reattach-to-user-namespace) || \
     ([ "$backend" = "xsel" ] && has xsel && [ -n "${DISPLAY-}" ]) || \
@@ -161,6 +165,7 @@ set_backend() {
     ([ "$backend" = "tmux" ] && has tmux && is_tmux_session) || \
     {(one_of "$backend" "fifo" "shm" "tmp") && \
       set_buffer_file "$backend"; } || \
+    ([ "$backend" = "fish" ] && has fish) || \
     ([ "$backend" = "-" ]); } then
     shift 2
     set_backend $mode $@
@@ -351,8 +356,8 @@ if [ "$backend" = "auto" ]; then
   if [ "$subcommand" = "copy" ]; then
     if [ "$location" = "local" ]; then
       backend_priority_list="$CPCP_COPY_LOCAL_PRIORITY_LIST"
-      [ "$backend_priority_list" ] || backend_priority_list="\
-        pbcopy reattach-to-user-namespace xsel xclip tmux fifo shm tmp osc52"
+      [ "$backend_priority_list" ] || backend_priority_list="pbcopy \
+        reattach-to-user-namespace xsel xclip tmux fifo shm fish tmp osc52"
     elif [ "$location" = "remote" ]; then
       backend_priority_list="$CPCP_COPY_REMOTE_PRIORITY_LIST"
       [ "$backend_priority_list" ] || backend_priority_list="nc osc52"
@@ -361,7 +366,7 @@ if [ "$backend" = "auto" ]; then
     if [ "$location" = "local" ]; then
       backend_priority_list="$CPCP_PASTE_LOCAL_PRIORITY_LIST"
       [ "$backend_priority_list" ] || backend_priority_list="\
-        pbcopy reattach-to-user-namespace xsel xclip tmux fifo shm tmp"
+        pbcopy reattach-to-user-namespace xsel xclip tmux fifo shm fish tmp"
     elif [ "$location" = "remote" ]; then
       backend_priority_list="$CPCP_PASTE_REMOTE_PRIORITY_LIST"
       [ "$backend_priority_list" ] || backend_priority_list=""
@@ -425,6 +430,14 @@ if [ "$encrypt" = "auto" ]; then
   fi
 fi
 
+# Always enable base64 for fish backend
+# Note: Fish seems to be able to recognize if binary data is stored in variables
+# sometimes, and it may be possible to get binary data in and out of its
+# variables unchanged without issues. But at the moment, I'm not sure how to do
+# this properly. Thus, let's just use base64 as a safer workaround for now.
+# TODO: Work this out (don't depend on base64 for fish backend)
+[ "$backend" = "fish" ] && base64="true"
+
 if [ "$base64" = "auto" ]; then
   if (get_base64_command 1> /dev/null) && \
     (is "$cpcp_paste_reliant_backend" || [ "$backend" = "-" ]); then
@@ -461,6 +474,19 @@ xclip -i -selection clipboard" ;;
 cat $buffer_file > /dev/null && \
 (printf \"%s\" \"\$data\" > $buffer_file &) > /dev/null)" ;;
       "shm") command="tee > $buffer_file" ;;
+      "fish") command="fish -c \"\
+while read --null part; \
+if not set --query $fish_append_flag_name; \
+set $fish_read_buffer_name \\\$part; \
+set $fish_append_flag_name; \
+else; \
+  set --append $fish_read_buffer_name \\\$part; \
+end; \
+end; \
+set --erase $fish_append_flag_name; \
+set --universal --export $fish_universal_clipboard_name \
+\\\$$fish_read_buffer_name\
+\"" ;;
       "tmp") command="tee > $buffer_file" ;;
       "-") command="cat"
     esac
@@ -484,6 +510,16 @@ data=\$(cat $buffer_file) && \
 (printf \"\$data\" > $buffer_file &) > /dev/null && \
 printf \"%s\" \"\$data\")" ;;
       "shm") command="cat $buffer_file" ;;
+      "fish") command="fish -c \"\
+if set --query $fish_universal_clipboard_name[1]; \
+printf \\\"%s\\\" \\\$$fish_universal_clipboard_name[1]; \
+end; \
+if set --query $fish_universal_clipboard_name[2]; \
+for part in \\\$$fish_universal_clipboard_name[2..-1]; \
+printf \\\"\0%s\\\" \\\$part; \
+end; \
+end\
+\"" ;;
       "tmp") command="cat $buffer_file" ;;
       "-") command="cat"
     esac
@@ -537,14 +573,18 @@ CPCP_ENCRYPTION_KEY is empty" >&2 && return 5)
   else
     cipher="$default_cipher"
   fi
+  if is "$base64"; then
+    base64_option=" -base64"
+  else
+    base64_option=""
+  fi
   if [ "$subcommand" = "copy" ]; then
     data_pipe="$data_pipe$encryption_command $cipher -e -salt -pass \
-env:CPCP_ENCRYPTION_KEY | "
+env:CPCP_ENCRYPTION_KEY$base64_option | "
   elif [ "$subcommand" = "paste" ]; then
     data_pipe=" | $encryption_command $cipher -d -pass \
-env:CPCP_ENCRYPTION_KEY$data_pipe"
+env:CPCP_ENCRYPTION_KEY$base64_option$data_pipe"
   fi
-  is "$base64" && data_pipe="$data_pipe -base64"
 elif is "$base64"; then
   base64_command=$(get_base64_command) || return 6
   if [ "$subcommand" = "copy" ]; then

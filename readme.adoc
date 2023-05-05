@@ -16,17 +16,20 @@ Inspiration taken from
 
 == TODO list
 
+* Implement most `remote` commands through `ssh`
 * A `cleanup` subcommand
 * Programming style and correctness
 ** Go over function scoping
 ** Go over instances of command substitions re. quotes vs. no quotes
 * Add other backends, e.g.:
-** `fish` universal variable
 ** `wl-copy` and `wl-paste`
 ** `lemonade`
 ** `doitclient`
 ** `win32yank`
 * Testing
+** Consider special cases, such as
+*** NUL character
+* Any `TODO` marks in the script file
 * Think about what else could be on this list
 
 == Source code
