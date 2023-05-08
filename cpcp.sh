@@ -335,24 +335,24 @@ if [ "$#" -le 0 ]; then
 else
   subcommand="$1"
   one_of "$subcommand" $subcommands || [ "$subcommand" = "rand" ] || \
-    (print_usage; return 1)
+    (print_usage; exit 1)
   shift 1
 fi
 
 if [ "$#" -le 0 ]; then
   location="$default_location"
   [ "$subcommand" = "rand" ] && \
-    (printf "%s\n" "$0: missing argument n_bytes" >&2; return 9)
+    (printf "%s\n" "$0: missing argument n_bytes" >&2; exit 9)
 else
   if [ "$subcommand" = "rand" ]; then
     location=""
     n_bytes="$1"
     is_unsigned "$n_bytes" || (printf "%s\n" \
-      "$0: n_bytes \"$n_bytes\" is not an unsigned integer" >&2; return 8)
+      "$0: n_bytes \"$n_bytes\" is not an unsigned integer" >&2; exit 8)
   else
     location="$1"
     n_bytes=""
-    one_of "$location" $locations || (print_usage; return 1)
+    one_of "$location" $locations || (print_usage; exit 1)
   fi
   shift 1
 fi
@@ -362,9 +362,9 @@ if [ "$#" -le 0 ]; then
 else
   backend="$1"
   if [ "$subcommand" = "rand" ]; then
-    one_of "$backend" $rand_backends || (print_usage; return 1)
+    one_of "$backend" $rand_backends || (print_usage; exit 1)
   else
-    one_of "$backend" $backends || (print_usage; return 1)
+    one_of "$backend" $backends || (print_usage; exit 1)
   fi
   shift 1
 fi
@@ -390,9 +390,9 @@ if [ "$location" = "both" ]; then
 
   in=$(cat)
 
-  printf "%s" "$in" | $0 $opts "$subcommand" "local"  "$backend" $@ || return $?
-  printf "%s" "$in" | $0 $opts "$subcommand" "remote" "$backend" $@ || return $?
-  return 0
+  printf "%s" "$in" | $0 $opts "$subcommand" "local"  "$backend" $@ || exit $?
+  printf "%s" "$in" | $0 $opts "$subcommand" "remote" "$backend" $@ || exit $?
+  exit 0
 fi
 
 [ "$backend" = "pbpaste" ] && backend="pbcopy"
@@ -425,12 +425,12 @@ if [ "$backend" = "auto" ]; then
       botan urandom random fish"
   fi
   backend_priority_list=$(oneline_args $backend_priority_list)
-  set_backend "$subcommand" "auto" $backend_priority_list
+  set_backend "$subcommand" "auto" $backend_priority_list || exit 2
 else
-  set_backend "$subcommand" "$backend" "$backend"
+  set_backend "$subcommand" "$backend" "$backend" || exit 2
 fi
 
-[ "$backend" ] || return 2
+[ "$backend" ] || exit 2
 
 if one_of "$backend" $cpcp_paste_reliant_backends && \
   [ "$subcommand" != "rand" ]; then
@@ -467,7 +467,7 @@ if [ ! "$compress" = "false" ]; then
       else
         printf "%s\n" "$0: compressor "$compress" not available" >&2
       fi
-      return 7
+      exit 7
     fi
     compress="$compressor"
   fi
@@ -605,11 +605,11 @@ elif [ "$subcommand" = "rand" ]; then
     "urandom"|"random")
       command="dd if=/dev/$backend bs=1 count=$n_bytes 2> /dev/null"
       if is "$base64_here"; then
-        base64_command=$(get_base64_command "$subcommand") || return 6
+        base64_command=$(get_base64_command "$subcommand") || exit 6
         command="$command | $base64_command"
       fi ;;
     "fish")
-      base64_command=$(get_base64_command --decode) || return 6
+      base64_command=$(get_base64_command --decode) || exit 6
       command="fish -c \"\
 for i in (seq (math --scale=0 \\\"ceil($n_bytes / 3) x 4\\\")); \
 random choice \
@@ -622,7 +622,7 @@ string join \\\"\\\"\" | \
 $base64_command | \
 dd bs=1 count=$n_bytes 2> /dev/null"
       if is "$base64_here"; then
-        base64_command=$(get_base64_command "$subcommand") || return 6
+        base64_command=$(get_base64_command "$subcommand") || exit 6
         command="$command | $base64_command"
       fi ;;
   esac
@@ -658,14 +658,14 @@ if [ ! "$compress" = "false" ]; then
   fi
   if [ ! "$compression_command" ]; then
     printf "%s\n" "$0: compressor "$compress" not available" >&2
-    return 7
+    exit 7
   fi
 fi
 
 if is "$encrypt"; then
-  encryption_command=$(get_encryption_command) || return 4
+  encryption_command=$(get_encryption_command) || exit 4
   [ "$CPCP_ENCRYPTION_KEY" ] || (printf "%s\n" "$0: encryption requested but \
-CPCP_ENCRYPTION_KEY is empty" >&2 && return 5)
+CPCP_ENCRYPTION_KEY is empty" >&2 && exit 5)
   if [ "$CPCP_ENCRYPTION_CIPHER" ]; then
     cipher="$CPCP_ENCRYPTION_CIPHER"
   else
@@ -685,7 +685,7 @@ env:CPCP_ENCRYPTION_KEY$base64_option$data_pipe"
   fi
 elif is "$base64" && \
     ([ "$subcommand" != "rand" ] || [ "$compress" != "false" ]); then
-  base64_command=$(get_base64_command "$subcommand") || return 6
+  base64_command=$(get_base64_command "$subcommand") || exit 6
   if one_of "$subcommand" "copy" "rand"; then
     data_pipe="$data_pipe$base64_command | "
   elif [ "$subcommand" = "paste" ]; then
@@ -734,6 +734,6 @@ if [ "$command" ]; then
 else
   printf "%s\n" "$0: combination of arguments $subcommand $location $backend \
 not available" >&2
-  return 3
+  exit 3
 fi
 
