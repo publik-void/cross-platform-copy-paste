@@ -7,6 +7,9 @@ A script to handle copying and pasting to local and remote clipboards without
 the caller needing to worry about the platform. The only strict dependency is
 `/bin/sh` (at least I hope so, for now).
 
+Also supports compression, encryption, base64 encoding and generation of random
+bytes.
+
 Inspiration taken from
 
 * https://github.com/samoshkin/tmux-config.git
@@ -26,6 +29,9 @@ Inspiration taken from
 ** `lemonade`
 ** `doitclient`
 ** `win32yank`
+* For codecs, RNG and clipboard access, common scripting languages like Perl or
+  Python may provide a bunch of functionality that could be incorportaed into
+  providers/backends in the script
 * Testing
 ** Consider special cases, such as
 *** NUL character

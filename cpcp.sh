@@ -9,6 +9,7 @@ subcommands="copy paste"
 locations="auto local remote both"
 backends="auto - pbcopy pbpaste reattach-to-user-namespace xsel xclip nc osc52 \
 tmux fifo shm fish tmp"
+rand_backends="auto libressl openssl botan urandom random fish"
 
 default_subcommand="copy"
 default_location="auto"
@@ -36,6 +37,7 @@ print_usage() {
     [$(printf %s "$locations" | tr " " "|")] \\
     [$(printf %s "$backends" | tr " " "|")] \\
     [files...]
+  $0 [opts...] rand n_bytes [$(printf %s "$rand_backends" | tr " " "|")]
 
 Notes:
   The default subcommand, location, and backend are $default_subcommand, \
@@ -54,14 +56,14 @@ fifo, shm (if filesystem is in-memory), and tmp backends.
   * CPCP_COPY_LOCAL_PRIORITY_LIST can be set to override the default set and \
 order of backends to try for $0 copy local auto.
   * CPCP_COPY_REMOTE_PRIORITY_LIST, CPCP_PASTE_LOCAL_PRIORITY_LIST, \
-CPCP_PASTE_REMOTE_RPIORITY_LIST: same as above for other subcommands and \
+CPCP_PASTE_REMOTE_PRIORITY_LIST: same as above for other subcommands and \
 locations.
-  * CPCP_COPY_PRE_PIPE, CPCP_COPY_POST_PIPE: can be set to apply additional \
+  * CPCP_COPY_PRE_PIPE, CPCP_COPY_POST_PIPE can be set to apply additional \
 pipelines to the data before and after compression, encryption and base64 \
 coding occurs.
   * CPCP_PASTE_PRE_PIPE, CPCP_PASTE_POST_PIPE: same as above for paste \
 subcommand.
-  * CPCP_COMPRESSOR_PRIORITY_LIST: can be set to override the default set and \
+  * CPCP_COMPRESSOR_PRIORITY_LIST can be set to override the default set and \
 order of compressors to try when --compress is auto or true.
   * CPCP_COMPRESSION_PIPE, CPCP_DECOMPRESSION_PIPE: for detailed control of \
 compression pipelines.
@@ -72,7 +74,9 @@ passwords being stored in buffer files as cleartext.
 library.
   * CPCP_ENCRYPTION_CIPHER can be used to choose an encryption cipher (default \
 is $default_cipher).
-  * CPCP_BASE64_COMMAND can be used to override the choice of base64 codec."
+  * CPCP_BASE64_COMMAND can be used to override the choice of base64 codec.
+  * CPCP_RAND_PRIORITY_LIST can be set to override the default set and \
+order of random number generators to try for $0 rand."
 
   printf "%s\n" "$msg"
 }
@@ -89,6 +93,15 @@ one_of() (
   shift 1
   one_of $word $@
 )
+
+is_unsigned ()
+{
+    case "$1" in
+        (*[!0123456789]*) return 1 ;;
+        ('')              return 1 ;;
+        (*)               return 0 ;;
+    esac
+}
 
 # This only works if stdin doesn't come from a redirection, so of limited value
 is_tty() { tty 2> /dev/null; }
@@ -142,8 +155,9 @@ set_buffer_file() {
 }
 
 set_backend() {
-  mode="$1"
-  if [ $# -le 1 ]; then
+  cmd="$1"
+  mode="$2"
+  if [ $# -le 2 ]; then
     backend=""
     if [ "$mode" = "auto" ]; then
       is "$verbose" && v=" (priority list: $backend_priority_list)" || v=""
@@ -153,8 +167,8 @@ set_backend() {
     fi
     return 1
   fi
-  backend="$2"
-  if ! {
+  backend="$3"
+  if { [ "$cmd" != "rand" ] && ! {
     ([ "$backend" = "pbcopy" ] && has pbcopy && has pbpaste) || \
     ([ "$backend" = "reattach-to-user-namespace" ] && \
       has reattach-to-user-namespace) || \
@@ -166,9 +180,19 @@ set_backend() {
     {(one_of "$backend" "fifo" "shm" "tmp") && \
       set_buffer_file "$backend"; } || \
     ([ "$backend" = "fish" ] && has fish) || \
-    ([ "$backend" = "-" ]); } then
-    shift 2
-    set_backend $mode $@
+    ([ "$backend" = "-" ]); } } || \
+    { [ "$cmd" = "rand" ] && ! {
+    ([ "$backend" = "libressl" ] && has libressl) || \
+    ([ "$backend" = "openssl" ] && has openssl) || \
+    ([ "$backend" = "botan" ] && has botan && botan has_command rng) || \
+    ([ "$backend" = "urandom" ] && test -c /dev/urandom) || \
+    ([ "$backend" = "random" ] && test -c /dev/random) || \
+    ([ "$backend" = "fish" ] && has fish && fish -c "type -q random" && \
+      fish -c "type -q math" && fish -c "type -q string" && \
+      get_base64_command 1> /dev/null)
+    } } then
+    shift 3
+    set_backend "$cmd" "$mode" $@
   fi
 }
 
@@ -257,15 +281,16 @@ get_encryption_command() (
     printf "$CPCP_ENCRYPTION_COMMAND") || \
   (has libressl && printf "libressl") || \
   (has openssl  && printf "openssl") || \
-  printf "%s\n" "$0: no valid encryption command could be found" >&2
+  (printf "%s\n" "$0: no valid encryption command could be found" >&2;
+    return 1)
   # TODO: Add `botan` as an encryption command
 )
 
 get_base64_command() (
   decode="false"
-  [ $# = 1 ] && one_of "$1" "paste" "decode" "-d" && decode="true"
-  is decode && d_flag=" -d" || d_flag=""
-  is decode && botan_cmd="base64_dec" || botan_cmd="base64_enc"
+  [ $# = 1 ] && one_of "$1" "paste" "--decode" "-d" && decode="true"
+  is "$decode" && d_flag=" -d" || d_flag=""
+  is "$decode" && botan_cmd="base64_dec" || botan_cmd="base64_enc"
   (has "$CPCP_BASE64_COMMAND" && \
     printf "$CPCP_BASE64_COMMAND$d_flag") || \
   (has base64   && printf "base64$d_flag") || \
@@ -273,8 +298,10 @@ get_base64_command() (
   (has openssl  && printf "openssl base64$d_flag") || \
   (has "$CPCP_ENCRYPTION_COMMAND" && \
     printf "$CPCP_ENCRYPTION_COMMAND base64$d_flag") || \
-  (has botan && printf "botan $botan_cmd -") || \
-  printf "%s\n" "$0: no valid base64 codec could be found" >&2
+  (has botan && botan has_command "$botan_cmd" && \
+    printf "botan $botan_cmd -") || \
+  (printf "%s\n" "$0: no valid base64 codec could be found" >&2;
+    return 1)
 )
 
 buffer_file=""
@@ -307,15 +334,26 @@ if [ "$#" -le 0 ]; then
   subcommand="$default_subcommand"
 else
   subcommand="$1"
-  one_of "$subcommand" $subcommands || (print_usage; return 1)
+  one_of "$subcommand" $subcommands || [ "$subcommand" = "rand" ] || \
+    (print_usage; return 1)
   shift 1
 fi
 
 if [ "$#" -le 0 ]; then
   location="$default_location"
+  [ "$subcommand" = "rand" ] && \
+    (printf "%s\n" "$0: missing argument n_bytes" >&2; return 9)
 else
-  location="$1"
-  one_of "$location" $locations || (print_usage; return 1)
+  if [ "$subcommand" = "rand" ]; then
+    location=""
+    n_bytes="$1"
+    is_unsigned "$n_bytes" || (printf "%s\n" \
+      "$0: n_bytes \"$n_bytes\" is not an unsigned integer" >&2; return 8)
+  else
+    location="$1"
+    n_bytes=""
+    one_of "$location" $locations || (print_usage; return 1)
+  fi
   shift 1
 fi
 
@@ -323,7 +361,11 @@ if [ "$#" -le 0 ]; then
   backend="$default_backend"
 else
   backend="$1"
-  one_of "$backend" $backends || (print_usage; return 1)
+  if [ "$subcommand" = "rand" ]; then
+    one_of "$backend" $rand_backends || (print_usage; return 1)
+  else
+    one_of "$backend" $backends || (print_usage; return 1)
+  fi
   shift 1
 fi
 
@@ -377,16 +419,21 @@ if [ "$backend" = "auto" ]; then
       backend_priority_list="$CPCP_PASTE_REMOTE_PRIORITY_LIST"
       [ "$backend_priority_list" ] || backend_priority_list=""
     fi
+  elif [ "$subcommand" = "rand" ]; then
+    backend_priority_list="$CPCP_RAND_PRIORITY_LIST"
+    [ "$backend_priority_list" ] || backend_priority_list="libressl openssl \
+      botan urandom random fish"
   fi
   backend_priority_list=$(oneline_args $backend_priority_list)
-  set_backend "auto" $backend_priority_list
+  set_backend "$subcommand" "auto" $backend_priority_list
 else
-  set_backend "$backend" "$backend"
+  set_backend "$subcommand" "$backend" "$backend"
 fi
 
 [ "$backend" ] || return 2
 
-if one_of "$backend" $cpcp_paste_reliant_backends; then
+if one_of "$backend" $cpcp_paste_reliant_backends && \
+  [ "$subcommand" != "rand" ]; then
   cpcp_paste_reliant_backend="true"
 else
   cpcp_paste_reliant_backend="false"
@@ -428,8 +475,8 @@ fi
 
 if [ "$encrypt" = "auto" ]; then
   if [ "$CPCP_ENCRYPTION_KEY" ] && \
-    (get_encryption_command 1> /dev/null) && \
-    (is "$cpcp_paste_reliant_backend"); then
+      (get_encryption_command 1> /dev/null) && \
+      (is "$cpcp_paste_reliant_backend"); then
     encrypt="true"
   else
     encrypt="false"
@@ -442,7 +489,7 @@ fi
 # variables unchanged without issues. But at the moment, I'm not sure how to do
 # this properly. Thus, let's just use base64 as a safer workaround for now.
 # TODO: Work this out (don't depend on base64 for fish backend)
-[ "$backend" = "fish" ] && base64="true"
+[ "$backend" = "fish" ] && [ "$subcommand" != "rand" ] && base64="true"
 
 if [ "$base64" = "auto" ]; then
   if (get_base64_command 1> /dev/null) && \
@@ -455,7 +502,7 @@ fi
 
 is "$verbose" && printf "resolved command: %s\n" "$(oneline_args "$0" \
   --compress="$compress" --encrypt="$encrypt" --base64="$base64" "$subcommand" \
-  "$location" "$backend" $@)"
+  "$location$n_bytes" "$backend" $@)"
 is "$verbose" && is "$backend_priority_list_printable" && printf \
   "$indent %s\n" "using backend priority list: $backend_priority_list"
 is "$verbose" && [ ! "$compress" = "false" ] && \
@@ -535,6 +582,50 @@ end\
       *) ;;
     esac
   fi
+elif [ "$subcommand" = "rand" ]; then
+  if is "$base64" && [ "$compress" = "false" ] && [ "$encrypt" = "false" ]; then
+    base64_here="true"
+  else
+    base64_here="false"
+  fi
+  case "$backend" in
+    # Note: usages of `dd` here should always use `bs=1`, because they can be
+    # unreliable otherwise. This is especially important for reading from
+    # `/dev/random`, but definitely not limited to that case!
+    # Also see `https://unix.stackexchange.com/questions/278443/whats-the-posix-
+    # way-to-read-an-exact-number-of-bytes-from-a-file`.
+    "libressl"|"openssl")
+      command="$backend rand"
+      is "$base64_here" && command="$command -base64"
+      command="$command $n_bytes" ;;
+    "botan")
+      command="botan rng"
+      is "$base64_here" && command="$command --format=base64"
+      command="$command $n_bytes" ;;
+    "urandom"|"random")
+      command="dd if=/dev/$backend bs=1 count=$n_bytes 2> /dev/null"
+      if is "$base64_here"; then
+        base64_command=$(get_base64_command "$subcommand") || return 6
+        command="$command | $base64_command"
+      fi ;;
+    "fish")
+      base64_command=$(get_base64_command --decode) || return 6
+      command="fish -c \"\
+for i in (seq (math --scale=0 \\\"ceil($n_bytes / 3) x 4\\\")); \
+random choice \
+a b c d e f g h i j k l m n o p q r s t u v w x y z \
+A B C D E F G H I J K L M N O P Q R S T U V W X Y Z \
+0 1 2 3 4 5 6 7 8 9 \
+\\\"/\\\" \\\"+\\\"; \
+end | \
+string join \\\"\\\"\" | \
+$base64_command | \
+dd bs=1 count=$n_bytes 2> /dev/null"
+      if is "$base64_here"; then
+        base64_command=$(get_base64_command "$subcommand") || return 6
+        command="$command | $base64_command"
+      fi ;;
+  esac
 fi
 
 data_pipe=""
@@ -546,7 +637,7 @@ elif [ "$subcommand" = "paste" ] && [ "$CPCP_PASTE_PRE_PIPE" ]; then
 fi
 
 if [ ! "$compress" = "false" ]; then
-  if [ "$subcommand" = "copy" ]; then
+  if one_of "$subcommand" "copy" "rand"; then
     case "$compress" in
       "true") compression_command="$CPCP_COMPRESSION_PIPE" ;;
       "lz4") compression_command="lz4 -c -z" ;;
@@ -585,16 +676,17 @@ CPCP_ENCRYPTION_KEY is empty" >&2 && return 5)
   else
     base64_option=""
   fi
-  if [ "$subcommand" = "copy" ]; then
+  if one_of "$subcommand" "copy" "rand"; then
     data_pipe="$data_pipe$encryption_command $cipher -e -salt -pass \
 env:CPCP_ENCRYPTION_KEY$base64_option | "
   elif [ "$subcommand" = "paste" ]; then
     data_pipe=" | $encryption_command $cipher -d -pass \
 env:CPCP_ENCRYPTION_KEY$base64_option$data_pipe"
   fi
-elif is "$base64"; then
+elif is "$base64" && \
+    ([ "$subcommand" != "rand" ] || [ "$compress" != "false" ]); then
   base64_command=$(get_base64_command "$subcommand") || return 6
-  if [ "$subcommand" = "copy" ]; then
+  if one_of "$subcommand" "copy" "rand"; then
     data_pipe="$data_pipe$base64_command | "
   elif [ "$subcommand" = "paste" ]; then
     data_pipe=" | $base64_command$data_pipe"
@@ -608,6 +700,8 @@ elif [ "$subcommand" = "paste" ] && [ "$CPCP_PASTE_POST_PIPE" ]; then
 fi
 
 if [ "$command" ]; then
+  [ "$data_pipe" ] && [ "$subcommand" = "rand" ] && \
+    data_pipe=$(printf "%s" " | $data_pipe" | sed 's/...$//')
   if is "$verbose"; then
     printf "$indent %s\n" "to backend command: $command"
     [ "$data_pipe" ] && printf "$indent %s\n" "via pipe command: $data_pipe"
@@ -618,8 +712,10 @@ if [ "$command" ]; then
       is "$verbose" && printf "$indent %s\n" "fed input: $data"
       [ "$data_pipe" ] && command="$data_pipe$command"
       printf "%s" "$data" | (eval "$command")
-    elif [ "$subcommand" = "paste" ]; then
+    elif one_of "$subcommand" "paste" "rand"; then
       [ "$data_pipe" ] && command="$command$data_pipe"
+      # Note: if input is empty, a data pipe that tries to decrypt or decompress
+      # may issue an error. I will leave it this way for now.
       data=$(eval $command)
       print_data() { is "$verbose" && printf "$indent %s\n" \
         "resulting in: $data" || printf "%s" "$data"; }
