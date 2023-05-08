@@ -388,7 +388,8 @@ if [ "$location" = "both" ]; then
   is "$verbose" && opts="--verbose $opts"
   is "$dry" && opts="--dry $opts"
 
-  in=$(cat)
+  # `x` is a workaround, see twoards the end of the script where it's also done.
+  in=$(cat; printf "x"); in="${data%x}"
 
   printf "%s" "$in" | $0 $opts "$subcommand" "local"  "$backend" $@ || exit $?
   printf "%s" "$in" | $0 $opts "$subcommand" "remote" "$backend" $@ || exit $?
@@ -708,7 +709,9 @@ if [ "$command" ]; then
   fi
   if ! is "$dry"; then
     if [ "$subcommand" = "copy" ]; then
-      data=$(cat "$@")
+      # The thing with the `x` below is a workaround to make sure newlines are
+      # not ignored.
+      data=$(cat "$@"; printf "x"); data="${data%x}"
       is "$verbose" && printf "$indent %s\n" "fed input: $data"
       [ "$data_pipe" ] && command="$data_pipe$command"
       printf "%s" "$data" | (eval "$command")
