@@ -36,6 +36,7 @@ Inspiration taken from
 ** Consider special cases, such as
 *** NUL character
 * Any `TODO` marks in the script file
+* Locale consideration for `.` workaround
 * Think about what else could be on this list
 
 == Source code

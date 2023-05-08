@@ -388,8 +388,8 @@ if [ "$location" = "both" ]; then
   is "$verbose" && opts="--verbose $opts"
   is "$dry" && opts="--dry $opts"
 
-  # `x` is a workaround, see twoards the end of the script where it's also done.
-  in=$(cat; printf "x"); in="${data%x}"
+  # `.` thing is a workaround, see other occurences of this below.
+  in=$(cat; ret=$?; echo .; exit "$ret"); in="${in%.}"
 
   printf "%s" "$in" | $0 $opts "$subcommand" "local"  "$backend" $@ || exit $?
   printf "%s" "$in" | $0 $opts "$subcommand" "remote" "$backend" $@ || exit $?
@@ -709,9 +709,10 @@ if [ "$command" ]; then
   fi
   if ! is "$dry"; then
     if [ "$subcommand" = "copy" ]; then
-      # The thing with the `x` below is a workaround to make sure newlines are
-      # not ignored.
-      data=$(cat "$@"; printf "x"); data="${data%x}"
+      # The thing with the `.` below is a workaround to make sure newlines are
+      # not ignored. See `https://unix.stackexchange.com/questions/383217/shell-
+      # keep-trailing-newlines-n-in-command-substitution`
+      data=$(cat "$@"; ret=$?; echo .; exit "$ret"); data="${data%.}"
       is "$verbose" && printf "$indent %s\n" "fed input: $data"
       [ "$data_pipe" ] && command="$data_pipe$command"
       printf "%s" "$data" | (eval "$command")
@@ -719,8 +720,8 @@ if [ "$command" ]; then
       [ "$data_pipe" ] && command="$command$data_pipe"
       # Note: if input is empty, a data pipe that tries to decrypt or decompress
       # may issue an error. I will leave it this way for now.
-      # Here's the `x` workaround once more
-      data=$(eval $command; printf "x"); data="${data%x}"
+      # Here's the `.` workaround once more
+      data=$(eval $command; ret=$?; echo .; exit "$ret"); data="${data%.}"
       print_data() { is "$verbose" && printf "$indent %s\n" \
         "resulting in: $data" || printf "%s" "$data"; }
       [ $# -le 0 ] && print_data
