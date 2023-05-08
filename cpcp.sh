@@ -83,7 +83,7 @@ order of random number generators to try for $0 rand."
 
 is() ( [ "$1" = "true" ]; )
 
-has() ( [ "$1" ] && type "$1" 1> /dev/null; )
+has() ( [ "$1" ] && type "$1" 1> /dev/null 2> /dev/null; )
 
 one_of() (
   word="$1"
