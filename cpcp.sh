@@ -719,7 +719,8 @@ if [ "$command" ]; then
       [ "$data_pipe" ] && command="$command$data_pipe"
       # Note: if input is empty, a data pipe that tries to decrypt or decompress
       # may issue an error. I will leave it this way for now.
-      data=$(eval $command)
+      # Here's the `x` workaround once more
+      data=$(eval $command; printf "x"); data="${data%x}"
       print_data() { is "$verbose" && printf "$indent %s\n" \
         "resulting in: $data" || printf "%s" "$data"; }
       [ $# -le 0 ] && print_data
