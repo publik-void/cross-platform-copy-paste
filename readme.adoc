@@ -17,11 +17,50 @@ Inspiration taken from
 * https://sunaku.github.io/tmux-yank-osc52.html
 * https://github.com/neovim/neovim/blob/master/runtime/doc/provider.txt
 
+== Example: Neovim integration
+
+This uses Neovim's clipboard provider interface by setting the variable
+`g:clipboard`. It uses Vim Script (not Lua), command strings (instead of lists)
+and the old `.` string concatenation operator (instead of `..`) for compatibilty
+with older Neovim versions.
+
+[source, vim]
+----
+" Search for the `cpcp.sh` script – insert your putative locations here
+for cmd in
+\   [expand("$HOME/.config/cross-platform-copy-paste/cpcp.sh"),
+\     "cpcp",
+\     "cpcp.sh"]
+  if executable(cmd)
+    let s:cpcp_command = cmd
+    break
+  end
+endfor
+
+if exists("s:cpcp_command")
+  let s:cpcp_clipboard = {
+  \   "name": "CPCPClipboard",
+  \   "copy": {
+  \      "+": s:cpcp_command . " --base64=auto",
+  \      "*": s:cpcp_command . " --base64=auto",
+  \    },
+  \   "paste": {
+  \      "+": s:cpcp_command . " --base64=auto paste",
+  \      "*": s:cpcp_command . " --base64=auto paste",
+  \   },
+  \   "cache_enabled": 1,
+  \ }
+
+  let g:clipboard = s:cpcp_clipboard
+endif
+----
+
 == TODO list
 
 * Implement most `remote` commands through `ssh`
 * A `cleanup` subcommand
 * Programming style and correctness
+** Eliminate warnings from `shellcheck`
 ** Go over function scoping
 ** Go over instances of command substitions re. quotes vs. no quotes
 * Add other backends, e.g.:
@@ -29,9 +68,12 @@ Inspiration taken from
 ** `lemonade`
 ** `doitclient`
 ** `win32yank`
+* Keep in mind `fish` will deprecate its universal variables in the future.
+  Think about whether the `fish` backend even makes sense and update it to be
+  aware of the `fish` version and/or use any new functionality.
 * For codecs, RNG and clipboard access, common scripting languages like Perl or
   Python may provide a bunch of functionality that could be incorportaed into
-  providers/backends in the script
+  providers/backends in the script.
 * Testing
 ** Consider special cases, such as
 *** NUL character
